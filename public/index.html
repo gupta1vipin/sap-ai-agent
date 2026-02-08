@@ -327,6 +327,37 @@
             }
         }
 
+        .processing-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 16px;
+            background: #f0f4ff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #e0e0e0;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .processing-text {
+            color: #667eea;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
         .voice-status {
             position: fixed;
             top: 20px;
@@ -348,6 +379,66 @@
         .voice-status.processing {
             display: block;
             background: #f59e0b;
+        }
+
+        .session-context {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            padding: 12px;
+            max-width: 250px;
+            font-size: 12px;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 999;
+            display: none;
+        }
+
+        .session-context.active {
+            display: none !important; /* Sidebar hidden - not displayed to user */
+        }
+
+        .session-context-title {
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 6px;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+
+        .session-item {
+            background: #f0f4ff;
+            padding: 6px;
+            margin-bottom: 4px;
+            border-radius: 4px;
+            color: #333;
+            border-left: 3px solid #667eea;
+        }
+
+        .session-item-label {
+            font-weight: 600;
+            font-size: 10px;
+            color: #667eea;
+        }
+
+        .session-item-value {
+            font-size: 11px;
+            color: #333;
+            margin-top: 2px;
+        }
+
+        .voice-tips {
+            background: #fff3cd;
+            border-left: 3px solid #ffc107;
+            padding: 8px;
+            margin-top: 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            color: #856404;
         }
 
         ::-webkit-scrollbar {
@@ -420,8 +511,14 @@
     </div>
 
     <div class="voice-status" id="voiceStatus"></div>
+    <div class="session-context" id="sessionContext">
+        <div class="session-context-title">Session Context</div>
+        <div id="sessionItems"></div>
+    </div>
 
     <script>
+        let BASE_IMAGE_URL = ""; // Will be loaded from /api/config on page load
+        
         const userInput = document.getElementById('userInput');
         const sendBtn = document.getElementById('sendBtn');
         const micBtn = document.getElementById('micBtn');
@@ -431,6 +528,29 @@
         let cart = { items: [], total: 0 };
         let isListening = false;
         let recognition = null;
+        let sessionContext = { recentProducts: [], cartGuid: null };
+
+        // Load configuration from server
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                BASE_IMAGE_URL = config.baseImageUrl || 'https://composable-storefront-demo.eastus.cloudapp.azure.com:8443/medias/?';
+                console.log('[Client] Loaded BASE_IMAGE_URL:', BASE_IMAGE_URL);
+            } catch (error) {
+                console.warn('[Client] Failed to load config:', error);
+                BASE_IMAGE_URL = 'https://composable-storefront-demo.eastus.cloudapp.azure.com:8443/medias/?';
+            }
+        }
+
+        // Get full image URL by prepending base URL
+        function getFullImageUrl(imageUrl) {
+            if (!imageUrl) return null;
+            if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+                return imageUrl;
+            }
+            return BASE_IMAGE_URL + imageUrl;
+        }
 
         // Initialize Web Speech API
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -504,6 +624,9 @@
             }
         });
 
+        // Load configuration on page load
+        loadConfig();
+
         async function sendMessage() {
             const message = userInput.value.trim();
             if (!message) return;
@@ -516,24 +639,19 @@
             sendBtn.disabled = true;
             micBtn.disabled = true;
 
-            // Show typing indicator
-            showTypingIndicator();
-
             try {
-                const response = await fetch('/api/search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: message })
-                });
-
-                removeTypingIndicator();
-                const data = await response.json();
+                const data = await apiCall('/api/search', 'POST', 
+                    { query: message }, 
+                    '🔍 Processing your request...');
 
                 if (data.error) {
                     addMessageToChat(`Sorry, I encountered an error: ${data.response}`, 'agent');
                 } else {
                     // Add agent response
                     addMessageToChat(data.response, 'agent');
+
+                    // Update session context display
+                    updateSessionContext(data);
 
                     // If products were found, display them
                     if (data.products && data.products.length > 0) {
@@ -551,7 +669,6 @@
                     }
                 }
             } catch (error) {
-                removeTypingIndicator();
                 addMessageToChat(`Error: ${error.message}`, 'agent');
             } finally {
                 sendBtn.disabled = false;
@@ -579,10 +696,22 @@
 
             const productsHTML = products.map(p => {
                 const price = parseFloat((p.price?.formattedValue || '$0').replace('$', ''));
-                const imageUrl = p.images && p.images.length > 0 ? p.images[0].url : null;
                 
-                const imageHTML = imageUrl
-                    ? `<img src="${imageUrl}" alt="${escapeHtml(p.name)}">`
+                // Extract thumbnail image
+                let imageUrl = null;
+                if (p.images && p.images.length > 0) {
+                    const thumbnailImg = p.images.find(img => img.format === 'thumbnail');
+                    imageUrl = thumbnailImg?.url || (p.images[0]?.url || null);
+                }
+                // Fallback to thumbnailUrl if available (from search results)
+                if (!imageUrl && p.thumbnailUrl) {
+                    imageUrl = p.thumbnailUrl;
+                }
+                // Get full image URL with base
+                const fullImageUrl = getFullImageUrl(imageUrl);
+                
+                const imageHTML = fullImageUrl
+                    ? `<img src="${fullImageUrl}" alt="${escapeHtml(p.name)}" style="width:100%;height:100%;object-fit:cover;">`
                     : `<div class="placeholder">📦</div>`;
 
                 return `
@@ -605,34 +734,19 @@
 
         async function addProductToCart(code, name, price) {
             try {
-                // Include credentials to ensure session cookie is sent/received
-                const response = await fetch('/api/cart/add', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({
+                const data = await apiCall('/api/cart/add', 'POST',
+                    {
                         productCode: code,
                         productName: name,
                         price: price,
                         quantity: 1
-                    })
-                });
+                    },
+                    '🛒 Adding to cart...');
 
-                console.log('[Client] /api/cart/add response status:', response.status);
-
-                const text = await response.text();
-                let data = {};
-                try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
-
-                if (!response.ok) {
-                    console.error('[Client] Add to cart failed:', response.status, data);
-                    addMessageToChat(`Error adding to cart: ${data.details || data.raw || response.statusText}`, 'agent');
-                    return;
-                }
+                console.log('[Client] /api/cart/add response:', data);
 
                 // Success
                 cart = data.cart || data;
-                // Display cart summary in chat
                 showCartSummary();
                 addMessageToChat(`✅ Added "${name}" to your cart!`, 'agent');
             } catch (error) {
@@ -684,14 +798,25 @@
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message agent-message';
 
-            const imageUrl = p.images && p.images.length > 0 ? p.images[0].url : null;
+            let imageUrl = null;
+            if (p.images && p.images.length > 0) {
+                const thumbnailImg = p.images.find(img => img.format === 'thumbnail');
+                const productImg = p.images.find(img => img.format === 'product');
+                const zoomImg = p.images.find(img => img.format === 'zoom');
+                imageUrl = (thumbnailImg?.url || productImg?.url || zoomImg?.url || p.images[0]?.url || null);
+            }
+            if (!imageUrl && p.thumbnailUrl) {
+                imageUrl = p.thumbnailUrl;
+            }
+            // Get full image URL with base
+            const fullImageUrl = getFullImageUrl(imageUrl);
             const price = p.price?.formattedValue || (p.price?.value ? `$${p.price.value.toFixed(2)}` : '$0.00');
 
             const html = `
                 <div class="agent-bubble" style="max-width:90%">
                     <div style="display:flex;gap:12px;align-items:flex-start">
                         <div style="width:140px;height:120px;background:#f5f5f5;border-radius:6px;overflow:hidden;flex-shrink:0">
-                            ${imageUrl ? `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover">` : '<div style="display:flex;align-items:center;justify-content:center;height:100%">📦</div>'}
+                            ${fullImageUrl ? `<img src="${fullImageUrl}" style="width:100%;height:100%;object-fit:cover">` : '<div style="display:flex;align-items:center;justify-content:center;height:100%">📦</div>'}
                         </div>
                         <div style="flex:1">
                             <div style="font-weight:700;margin-bottom:6px">${escapeHtml(p.name || p.code || '')}</div>
@@ -755,9 +880,52 @@
             messagesArea.scrollTop = messagesArea.scrollHeight;
         }
 
-        function removeTypingIndicator() {
-            const indicator = document.getElementById('typingIndicator');
+        function showProcessingIndicator(message = 'Processing...') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message agent-message';
+            messageDiv.id = 'processingIndicator';
+            messageDiv.innerHTML = `
+                <div class="processing-indicator">
+                    <div class="spinner"></div>
+                    <div class="processing-text">${message}</div>
+                </div>
+            `;
+            messagesArea.appendChild(messageDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        function removeProcessingIndicator() {
+            const indicator = document.getElementById('processingIndicator');
             if (indicator) indicator.remove();
+        }
+
+        // Generic API call wrapper with processing indicator
+        async function apiCall(endpoint, method = 'POST', body = null, processingMessage = 'Processing...') {
+            showProcessingIndicator(processingMessage);
+            try {
+                const options = {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin'
+                };
+                if (body) options.body = JSON.stringify(body);
+                
+                const response = await fetch(endpoint, options);
+                removeProcessingIndicator();
+                
+                const text = await response.text();
+                let data = {};
+                try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
+                
+                if (!response.ok) {
+                    throw new Error(data.details || data.raw || response.statusText);
+                }
+                
+                return data;
+            } catch (error) {
+                removeProcessingIndicator();
+                throw error;
+            }
         }
 
         function escapeHtml(text) {
@@ -769,6 +937,68 @@
                 "'": '&#039;'
             };
             return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        function updateSessionContext(data) {
+            // Update session context from server response (if available in future enhancement)
+            const contextEl = document.getElementById('sessionItems');
+            let contextHTML = '';
+
+            if (data.products && data.products.length > 0) {
+                sessionContext.recentProducts = data.products.map(p => ({
+                    code: p.code,
+                    name: p.name
+                }));
+            }
+
+            if (data.product) {
+                sessionContext.recentProducts = [{
+                    code: data.product.code,
+                    name: data.product.name
+                }];
+            }
+
+            // Display recent product
+            if (sessionContext.recentProducts.length > 0) {
+                const product = sessionContext.recentProducts[0];
+                contextHTML += `
+                    <div class="session-item">
+                        <div class="session-item-label">📦 Last Product</div>
+                        <div class="session-item-value">${escapeHtml(product.name)}</div>
+                        <div class="voice-tips">
+                            💡 Try: "Show reviews for that" or "Tell me more about it"
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Display cart info
+            if (cart.items && cart.items.length > 0) {
+                contextHTML += `
+                    <div class="session-item">
+                        <div class="session-item-label">🛒 Your Cart</div>
+                        <div class="session-item-value">${cart.items.length} item(s) • ${cart.totalPrice || '$0.00'}</div>
+                        <div class="voice-tips">
+                            💡 Say: "Show me my cart"
+                        </div>
+                    </div>
+                `;
+            } else {
+                contextHTML += `
+                    <div class="session-item">
+                        <div class="session-item-label">🛒 Your Cart</div>
+                        <div class="session-item-value">Empty</div>
+                    </div>
+                `;
+            }
+
+            contextEl.innerHTML = contextHTML;
+
+            // Show context panel if there's content
+            const panel = document.getElementById('sessionContext');
+            if (sessionContext.recentProducts.length > 0 || (cart.items && cart.items.length > 0)) {
+                panel.classList.add('active');
+            }
         }
     </script>
 </body>

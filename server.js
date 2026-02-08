@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const BASE_IMAGE_URL = process.env.BASE_IMAGE_URL || 'https://composable-storefront-demo.eastus.cloudapp.azure.com:8443/medias/?';
 
 // In-memory stores (replace with database in production)
 const users = new Map();
@@ -35,6 +36,13 @@ app.use(session({
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Config endpoint to provide frontend configuration
+app.get('/api/config', (req, res) => {
+    res.json({
+        baseImageUrl: BASE_IMAGE_URL
+    });
+});
 
 // Authentication middleware
 const requireAuth = (req, res, next) => {
@@ -165,12 +173,22 @@ async function searchSAPProducts(query) {
             return "No products found.";
         }
         
-        // Strip HTML from product data
-        const cleanedProducts = response.data.products.map(p => ({
-            ...p,
-            name: stripHtml(p.name),
-            description: p.description ? stripHtml(p.description) : ''
-        }));
+        // Strip HTML from product data and extract thumbnail images
+        const cleanedProducts = response.data.products.map(p => {
+            // Extract thumbnail image URL
+            let thumbnailUrl = null;
+            if (p.images && p.images.length > 0) {
+                const thumbnailImg = p.images.find(img => img.format === 'thumbnail');
+                thumbnailUrl = thumbnailImg?.url || (p.images[0]?.url || null);
+            }
+            
+            return {
+                ...p,
+                name: stripHtml(p.name),
+                description: p.description ? stripHtml(p.description) : '',
+                thumbnailUrl: thumbnailUrl
+            };
+        });
 
         // Skip semantic re-ranking for single result or if only 2 products
         if (cleanedProducts.length <= 2) {
@@ -217,14 +235,29 @@ async function searchSAPProducts(query) {
 }
 
 /**
- * 2. Agent Logic
+ * 2. Agent Logic with Session Context
  */
-async function runAgent(userInput) {
+async function runAgent(userInput, req) {
+    // Initialize session arrays if not present
+    if (!req.session.recentProducts) req.session.recentProducts = [];
+    if (!req.session.cartGuid) req.session.cartGuid = null;
+
+    const recentContext = req.session.recentProducts.length > 0 ? `\n\nRecent products viewed: ${req.session.recentProducts.map(p => `${p.name} (${p.code})`).join(', ')}` : '';
+    const cartContext = req.session.cartGuid ? `\n\nUser has an active cart. They can ask to view it or add items to it.` : '';
+
     const systemPrompt = `You are a helpful SAP Commerce assistant. When users ask about products, extract the search query and start your response with [SEARCH: <query>] to trigger a product search. For example:
 - User: "I need a camera"
-- You: "[SEARCH: camera] Let me find some cameras for you..."  
+- You: "[SEARCH: camera] Let me find some cameras for you..."
 
-If the user asks something that doesn't require a search, just respond normally without the [SEARCH] tag.`;
+Context-aware commands (user may reference recent products):
+- "Show me reviews for that" or "reviews for it" → Use [REVIEWS: <last_product_code>]
+- "Tell me more about it" or "details for that" → Use [VIEW: <last_product_code>]
+- "Add this one to cart" → Acknowledge with [ADD_TO_CART: <last_product_code>]
+- "Show my cart" → You have the cart ID in session
+
+Session context:${recentContext}${cartContext}
+
+If user references "that", "it", "this one", "the last product", use the most recent product from session.`;
 
     const fullPrompt = `${systemPrompt}\n\nUser: ${userInput}\n\nAssistant:`;
 
@@ -238,65 +271,88 @@ If the user asks something that doesn't require a search, just respond normally 
         const assistantResponse = response.candidates[0]?.content?.parts[0]?.text || "No response";
 
         // Step B: Check if AI wants reviews, view a specific product, or search SAP
+        // First, check for context-based references (user says "that", "it", etc.)
+        const contextMatch = userInput.match(/\b(that|it|this one|the last|previous one|that product|show me details|tell me more)\b/i);
+        let lastProductCode = null;
+        
+        if (contextMatch && req.session.recentProducts && req.session.recentProducts.length > 0) {
+            lastProductCode = req.session.recentProducts[0].code;
+            console.log(`[Context] Detected reference, using last product: ${lastProductCode}`);
+        }
+        
         // Look for [REVIEWS: <code>] first
-        const reviewsMatch = assistantResponse.match(/\[REVIEWS: ([^\]]+)\]/);
+        let reviewsMatch = assistantResponse.match(/\[REVIEWS: ([^\]]+)\]/);
+        // If agent didn't extract code but user referenced "that", use context
+        if (!reviewsMatch && contextMatch && (userInput.toLowerCase().includes('review') || userInput.toLowerCase().includes('rate'))) {
+            reviewsMatch = { 1: lastProductCode };
+        }
+        
         if (reviewsMatch) {
-            const code = reviewsMatch[1].trim();
-            try {
-                const url = `${process.env.SAP_OCC_BASE_URL}/${process.env.SAP_SITE_ID}/products/${code}/reviews`;
-                const revResp = await axios.get(url, {
-                    params: { lang: 'en', curr: 'USD' }
-                });
+            const code = (reviewsMatch[1] || lastProductCode).trim();
+            if (code) {
+                try {
+                    const url = `${process.env.SAP_OCC_BASE_URL}/${process.env.SAP_SITE_ID}/products/${code}/reviews`;
+                    const revResp = await axios.get(url, {
+                        params: { lang: 'en', curr: 'USD' }
+                    });
 
-                const reviews = revResp.data?.reviews || [];
-                const averageRating = reviews.length ? (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length) : 0;
+                    const reviews = revResp.data?.reviews || [];
+                    const averageRating = reviews.length ? (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length) : 0;
 
-                return {
-                    response: assistantResponse,
-                    reviews: reviews,
-                    reviewsSummary: {
-                        count: reviews.length,
-                        averageRating: Math.round(averageRating * 100) / 100
-                    }
-                };
-            } catch (err) {
-                console.error('Reviews fetch error:', err.response?.data || err.message);
-                return {
-                    response: assistantResponse + '\n\n(Unable to fetch reviews)',
-                    reviews: [],
-                    reviewsSummary: { count: 0, averageRating: 0 },
-                    error: true
-                };
+                    return {
+                        response: assistantResponse,
+                        reviews: reviews,
+                        reviewsSummary: {
+                            count: reviews.length,
+                            averageRating: Math.round(averageRating * 100) / 100
+                        }
+                    };
+                } catch (err) {
+                    console.error('Reviews fetch error:', err.response?.data || err.message);
+                    return {
+                        response: assistantResponse + '\n\n(Unable to fetch reviews)',
+                        reviews: [],
+                        reviewsSummary: { count: 0, averageRating: 0 },
+                        error: true
+                    };
+                }
             }
         }
 
         // Look for [VIEW: <code>]
-        const viewMatch = assistantResponse.match(/\[VIEW: ([^\]]+)\]/);
+        let viewMatch = assistantResponse.match(/\[VIEW: ([^\]]+)\]/);
+        // If agent didn't extract code but user referenced "that" with detail/info keywords, use context
+        if (!viewMatch && contextMatch && (userInput.toLowerCase().includes('detail') || userInput.toLowerCase().includes('more') || userInput.toLowerCase().includes('info'))) {
+            viewMatch = { 1: lastProductCode };
+        }
+        
         if (viewMatch) {
-            const code = viewMatch[1].trim();
-            try {
-                const url = `${process.env.SAP_OCC_BASE_URL}/${process.env.SAP_SITE_ID}/products/${code}`;
-                const prodResp = await axios.get(url, {
-                    params: {
-                        fields: 'code,configurable,configuratorType,purchasable,name,summary,price(formattedValue,DEFAULT),images(galleryIndex,FULL),baseProduct,DEFAULT,averageRating,classifications,manufacturer,numberOfReviews,categories(FULL),baseOptions,variantOptions,variantType,stock(DEFAULT),description,availableForPickup,url,priceRange,multidimensional,tags,potentialPromotions(description),sapUnit',
-                        lang: 'en',
-                        curr: 'USD'
-                    }
-                });
+            const code = (viewMatch[1] || lastProductCode).trim();
+            if (code) {
+                try {
+                    const url = `${process.env.SAP_OCC_BASE_URL}/${process.env.SAP_SITE_ID}/products/${code}`;
+                    const prodResp = await axios.get(url, {
+                        params: {
+                            fields: 'code,configurable,configuratorType,purchasable,name,summary,price(formattedValue,DEFAULT),images(galleryIndex,FULL),baseProduct,DEFAULT,averageRating,classifications,manufacturer,numberOfReviews,categories(FULL),baseOptions,variantOptions,variantType,stock(DEFAULT),description,availableForPickup,url,priceRange,multidimensional,tags,potentialPromotions(description),sapUnit',
+                            lang: 'en',
+                            curr: 'USD'
+                        }
+                    });
 
-                return {
-                    response: assistantResponse,
-                    viewed: true,
-                    product: prodResp.data
-                };
-            } catch (err) {
-                console.error('Product view error:', err.response?.data || err.message);
-                return {
-                    response: assistantResponse + '\n\n(Unable to fetch product details)',
-                    viewed: false,
-                    product: null,
-                    error: true
-                };
+                    return {
+                        response: assistantResponse,
+                        viewed: true,
+                        product: prodResp.data
+                    };
+                } catch (err) {
+                    console.error('Product view error:', err.response?.data || err.message);
+                    return {
+                        response: assistantResponse + '\n\n(Unable to fetch product details)',
+                        viewed: false,
+                        product: null,
+                        error: true
+                    };
+                }
             }
         }
 
@@ -715,7 +771,30 @@ app.post('/api/search', async (req, res) => {
     }
 
     try {
-        const result = await runAgent(query);
+        const result = await runAgent(query, req);
+        
+        // Store recently viewed products in session for context-aware commands
+        if (result.products && result.products.length > 0) {
+            req.session.recentProducts = result.products.map(p => ({
+                code: p.code,
+                name: p.name,
+                price: p.price?.formattedValue,
+                viewedAt: new Date()
+            }));
+            console.log(`[Session] Stored ${result.products.length} recent products for context`);
+        }
+        
+        if (result.product) {
+            // Single product view - add to recent
+            req.session.recentProducts = [{
+                code: result.product.code,
+                name: result.product.name,
+                price: result.product.price?.formattedValue,
+                viewedAt: new Date()
+            }];
+            console.log(`[Session] Stored recent product: ${result.product.code}`);
+        }
+        
         res.json(result);
     } catch (error) {
         res.status(500).json({
