@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAP AI Commerce Agent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+        }
+
+        .container {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.2);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            margin: 20px;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            display: flex;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .user-message {
+            justify-content: flex-end;
+        }
+
+        .user-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 18px;
+            border-radius: 18px;
+            max-width: 70%;
+            word-wrap: break-word;
+            font-size: 14px;
+        }
+
+        .agent-message {
+            justify-content: flex-start;
+        }
+
+        .agent-bubble {
+            background: #f0f4ff;
+            color: #333;
+            padding: 12px 18px;
+            border-radius: 18px;
+            max-width: 80%;
+            word-wrap: break-word;
+            font-size: 14px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .products-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin: 10px 0;
+            max-width: 100%;
+        }
+
+        .product-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .product-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+
+        .product-image {
+            width: 100%;
+            height: 120px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+
+        .product-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .product-image.placeholder {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .product-name {
+            font-weight: 600;
+            font-size: 12px;
+            margin-bottom: 6px;
+            color: #333;
+            line-height: 1.3;
+            min-height: 24px;
+        }
+
+        .product-price {
+            color: #667eea;
+            font-weight: 700;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .product-stock {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .add-to-cart-btn {
+            width: 100%;
+            padding: 8px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        .add-to-cart-btn:hover {
+            background: #764ba2;
+        }
+
+        .cart-summary {
+            background: #f0fff4;
+            border-left: 4px solid #10b981;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 8px 0;
+            font-size: 13px;
+        }
+
+        .cart-summary-title {
+            font-weight: 600;
+            color: #059669;
+            margin-bottom: 6px;
+        }
+
+        .cart-summary-item {
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .cart-summary-totals {
+            border-top: 1px solid #d1fae5;
+            margin-top: 8px;
+            padding-top: 8px;
+            color: #059669;
+            font-weight: 600;
+        }
+
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-box {
+            flex: 1;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .message-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .message-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .send-btn, .mic-btn {
+            padding: 12px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .send-btn:hover, .mic-btn:hover {
+            background: #764ba2;
+        }
+
+        .send-btn:disabled, .mic-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .mic-btn.recording {
+            background: #ef4444;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            }
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 12px 18px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #667eea;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                opacity: 0.3;
+            }
+            30% {
+                opacity: 1;
+            }
+        }
+
+        .voice-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .voice-status.listening {
+            display: block;
+            background: #059669;
+        }
+
+        .voice-status.processing {
+            display: block;
+            background: #f59e0b;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #bbb;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #888;
+        }
+
+        @media (max-width: 768px) {
+            .products-container {
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            }
+
+            .agent-bubble {
+                max-width: 90%;
+            }
+
+            .user-bubble {
+                max-width: 90%;
+            }
+
+            .send-btn, .mic-btn {
+                padding: 10px 12px;
+                font-size: 14px;
+            }
+
+            .header h1 {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 SAP AI Commerce Agent</h1>
+            <p>Chat to search products, add to cart, and checkout!</p>
+        </div>
+
+        <div class="main-content">
+            <div class="chat-area">
+                <div class="messages" id="messagesArea">
+                    <div class="agent-message">
+                        <div class="agent-bubble">
+                            👋 Hello! I'm your SAP Commerce Shopping Assistant. What can I help you find today? Try asking things like "Find me a camera" or "Show me electronics". Use the 🎤 button to speak your request!
+                        </div>
+                    </div>
+                </div>
+
+                <div class="input-area">
+                    <div class="input-box">
+                        <input type="text" class="message-input" id="userInput" placeholder="Type your message or use the mic button..." autocomplete="off">
+                        <button class="mic-btn" id="micBtn" title="Click to use voice input" onclick="toggleVoiceInput()">🎤</button>
+                        <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="voice-status" id="voiceStatus"></div>
+
+    <script>
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const micBtn = document.getElementById('micBtn');
+        const messagesArea = document.getElementById('messagesArea');
+        const voiceStatus = document.getElementById('voiceStatus');
+
+        let cart = { items: [], total: 0 };
+        let isListening = false;
+        let recognition = null;
+
+        // Initialize Web Speech API
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                isListening = true;
+                micBtn.classList.add('recording');
+                voiceStatus.textContent = '🎤 Listening...';
+                voiceStatus.classList.add('listening');
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        userInput.value = transcript;
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+                if (interimTranscript) {
+                    userInput.placeholder = `Hearing: "${interimTranscript}"`;
+                }
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                micBtn.classList.remove('recording');
+                voiceStatus.classList.remove('listening');
+                userInput.placeholder = 'Type your message or use the mic button...';
+                if (userInput.value.trim()) {
+                    sendMessage();
+                }
+            };
+
+            recognition.onerror = (event) => {
+                voiceStatus.textContent = `❌ Error: ${event.error}`;
+                voiceStatus.classList.add('processing');
+                setTimeout(() => {
+                    voiceStatus.classList.remove('processing');
+                }, 3000);
+                micBtn.classList.remove('recording');
+                isListening = false;
+            };
+        }
+
+        function toggleVoiceInput() {
+            if (!recognition) {
+                alert('Voice input is not supported in your browser. Please use text input.');
+                return;
+            }
+
+            if (isListening) {
+                recognition.stop();
+            } else {
+                userInput.value = '';
+                recognition.start();
+            }
+        }
+
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            userInput.value = '';
+            userInput.focus();
+
+            // Add user message to chat
+            addMessageToChat(message, 'user');
+            sendBtn.disabled = true;
+            micBtn.disabled = true;
+
+            // Show typing indicator
+            showTypingIndicator();
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: message })
+                });
+
+                removeTypingIndicator();
+                const data = await response.json();
+
+                if (data.error) {
+                    addMessageToChat(`Sorry, I encountered an error: ${data.response}`, 'agent');
+                } else {
+                    // Add agent response
+                    addMessageToChat(data.response, 'agent');
+
+                    // If products were found, display them
+                    if (data.products && data.products.length > 0) {
+                        displayProducts(data.products);
+                    }
+
+                    // If a single product was returned (agent viewed a product), display detail
+                    if (data.product) {
+                        displayProductDetail(data.product);
+                    }
+
+                    // If reviews were returned, display a reviews summary and recent reviews
+                    if (data.reviews && data.reviews.length > 0) {
+                        displayReviews(data.reviews, data.reviewsSummary || {});
+                    }
+                }
+            } catch (error) {
+                removeTypingIndicator();
+                addMessageToChat(`Error: ${error.message}`, 'agent');
+            } finally {
+                sendBtn.disabled = false;
+                micBtn.disabled = false;
+            }
+        }
+
+        function addMessageToChat(text, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+
+            if (type === 'user') {
+                messageDiv.innerHTML = `<div class="user-bubble">${escapeHtml(text)}</div>`;
+            } else {
+                messageDiv.innerHTML = `<div class="agent-bubble">${escapeHtml(text)}</div>`;
+            }
+
+            messagesArea.appendChild(messageDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        function displayProducts(products) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message agent-message';
+
+            const productsHTML = products.map(p => {
+                const price = parseFloat((p.price?.formattedValue || '$0').replace('$', ''));
+                const imageUrl = p.images && p.images.length > 0 ? p.images[0].url : null;
+                
+                const imageHTML = imageUrl
+                    ? `<img src="${imageUrl}" alt="${escapeHtml(p.name)}">`
+                    : `<div class="placeholder">📦</div>`;
+
+                return `
+                    <div class="product-card">
+                        <div class="product-image">${imageHTML}</div>
+                        <div class="product-name">${escapeHtml(p.name)}</div>
+                        <div class="product-price">${p.price?.formattedValue || '$0.00'}</div>
+                        <div class="product-stock">${p.stock?.stockLevelStatus || 'In Stock'}</div>
+                        <button class="add-to-cart-btn" onclick="addProductToCart('${escapeHtml(p.code)}', '${escapeHtml(p.name)}', ${price})">
+                            Add to Cart
+                        </button>
+                    </div>
+                `;
+            }).join('');
+
+            messageDiv.innerHTML = `<div class="products-container">${productsHTML}</div>`;
+            messagesArea.appendChild(messageDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        async function addProductToCart(code, name, price) {
+            try {
+                // Include credentials to ensure session cookie is sent/received
+                const response = await fetch('/api/cart/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        productCode: code,
+                        productName: name,
+                        price: price,
+                        quantity: 1
+                    })
+                });
+
+                console.log('[Client] /api/cart/add response status:', response.status);
+
+                const text = await response.text();
+                let data = {};
+                try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
+
+                if (!response.ok) {
+                    console.error('[Client] Add to cart failed:', response.status, data);
+                    addMessageToChat(`Error adding to cart: ${data.details || data.raw || response.statusText}`, 'agent');
+                    return;
+                }
+
+                // Success
+                cart = data.cart || data;
+                // Display cart summary in chat
+                showCartSummary();
+                addMessageToChat(`✅ Added "${name}" to your cart!`, 'agent');
+            } catch (error) {
+                addMessageToChat(`Error adding to cart: ${error.message}`, 'agent');
+            }
+        }
+
+        function showCartSummary() {
+            if (!cart.items || cart.items.length === 0) {
+                return;
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message agent-message';
+
+            let itemsHTML = cart.items.map(item => 
+                `<div class="cart-summary-item">• ${escapeHtml(item.productName)} - Qty: ${item.quantity}</div>`
+            ).join('');
+
+            // Use SAP-calculated values if available, otherwise calculate
+            const subtotal = cart.subtotal 
+                ? parseFloat(cart.subtotal.replace('$', '')) 
+                : (cart.total || 0);
+            const tax = cart.tax 
+                ? cart.tax 
+                : `$${(Math.round(subtotal * 8) / 100).toFixed(2)}`;
+            const shipping = subtotal > 100 ? 'FREE' : '$10.00';
+            const shippingValue = subtotal > 100 ? 0 : 10;
+            const totalFormattedValue = parseFloat((cart.subtotal?.replace('$', '') || 0)) + 
+                                        parseFloat(tax.replace('$', '')) + 
+                                        shippingValue;
+
+            const summaryHTML = `
+                <div class="cart-summary">
+                    <div class="cart-summary-title">🛒 Cart Summary:</div>
+                    ${itemsHTML}
+                    <div class="cart-summary-totals">
+                        Subtotal: ${cart.subtotal || '$0.00'} | Tax: ${tax} | Shipping: ${shipping} | <strong>Total: $${totalFormattedValue.toFixed(2)}</strong>
+                    </div>
+                </div>
+            `;
+
+            messageDiv.innerHTML = summaryHTML;
+            messagesArea.appendChild(messageDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        function displayProductDetail(p) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message agent-message';
+
+            const imageUrl = p.images && p.images.length > 0 ? p.images[0].url : null;
+            const price = p.price?.formattedValue || (p.price?.value ? `$${p.price.value.toFixed(2)}` : '$0.00');
+
+            const html = `
+                <div class="agent-bubble" style="max-width:90%">
+                    <div style="display:flex;gap:12px;align-items:flex-start">
+                        <div style="width:140px;height:120px;background:#f5f5f5;border-radius:6px;overflow:hidden;flex-shrink:0">
+                            ${imageUrl ? `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover">` : '<div style="display:flex;align-items:center;justify-content:center;height:100%">📦</div>'}
+                        </div>
+                        <div style="flex:1">
+                            <div style="font-weight:700;margin-bottom:6px">${escapeHtml(p.name || p.code || '')}</div>
+                            <div style="color:#667eea;font-weight:700;margin-bottom:6px">${price}</div>
+                            <div style="font-size:13px;color:#333;margin-bottom:8px">${escapeHtml((p.summary || p.description || '').replace(/<[^>]*>/g, '').slice(0,300))}${(p.description||'').length>300? '...':''}</div>
+                            <div style="font-size:12px;color:#666">Stock: ${p.stock?.stockLevelStatus || 'Unknown'} • Rating: ${p.averageRating || 'N/A'}</div>
+                            <div style="margin-top:8px;display:flex;gap:8px">
+                                <button class="add-to-cart-btn" onclick="addProductToCart('${escapeHtml(p.code)}','${escapeHtml(p.name)}',${p.price?.value||0})">Add to Cart</button>
+                                <button class="send-btn" onclick="(async()=>{ addMessageToChat('Show me reviews for ${escapeHtml(p.code)}','user'); userInput.value=''; sendMessage(); })()">Ask Agent for Reviews</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            messageDiv.innerHTML = html;
+            messagesArea.appendChild(messageDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        function displayReviews(reviews, summary) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message agent-message';
+
+            const top = reviews.slice(0,5);
+            const reviewsHTML = top.map(r => `
+                <div style="margin-bottom:8px">
+                    <div style="font-weight:700;font-size:13px">${escapeHtml(r.headline || '')} — <span style="color:#667eea">${r.rating || ''}★</span></div>
+                    <div style="font-size:12px;color:#333">${escapeHtml((r.comment||'').slice(0,300))}${(r.comment||'').length>300? '...':''}</div>
+                    <div style="font-size:11px;color:#666;margin-top:4px">— ${escapeHtml(r.principal?.name || r.principal?.uid || 'Anonymous')}, ${new Date(r.date).toLocaleDateString()}</div>
+                </div>
+            `).join('');
+
+            const html = `
+                <div class="agent-bubble">
+                    <div style="font-weight:700;margin-bottom:8px">Reviews (${summary.count || reviews.length}) — Avg: ${summary.averageRating || ''}★</div>
+                    ${reviewsHTML}
+                    ${reviews.length > 5 ? `<div style="font-size:12px;color:#667eea;margin-top:6px">Showing 5 of ${reviews.length} reviews</div>` : ''}
+                </div>
+            `;
+
+            messageDiv.innerHTML = html;
+            messagesArea.appendChild(messageDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message agent-message';
+            messageDiv.id = 'typingIndicator';
+            messageDiv.innerHTML = `
+                <div class="agent-bubble">
+                    <div class="typing-indicator">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                </div>
+            `;
+            messagesArea.appendChild(messageDiv);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typingIndicator');
+            if (indicator) indicator.remove();
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+    </script>
+</body>
+</html>
